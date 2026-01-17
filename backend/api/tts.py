@@ -4,25 +4,25 @@ TTS API Router - Text-to-Speech generation endpoints
 
 import os
 import uuid
+import random
 from pathlib import Path
-from typing import Optional
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 router = APIRouter()
 
-# Storage paths
-AUDIO_DIR = Path(__file__).parent.parent / "storage" / "audio"
-AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+# Output folder - relative to project root
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+OUTPUT_DIR = PROJECT_ROOT / "Output"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class TTSRequest(BaseModel):
     text: str
     voice_id: str = "ngoc-huyen"
-    streaming: bool = False
 
 
 class TTSResponse(BaseModel):
@@ -30,6 +30,7 @@ class TTSResponse(BaseModel):
     text: str
     voice: str
     audio_url: str
+    filename: str
     duration: float
     created_at: str
 
@@ -39,6 +40,7 @@ _tts_engine = None
 
 
 def get_tts_engine():
+    """Initialize VieNeu TTS engine"""
     global _tts_engine
     if _tts_engine is None:
         try:
@@ -46,12 +48,23 @@ def get_tts_engine():
             _tts_engine = Vieneu()
             # Load default LoRA
             _tts_engine.load_lora_adapter("pnnbao-ump/VieNeu-TTS-0.3B-lora-ngoc-huyen")
-        except ImportError:
+            print("[VieNeu] Engine loaded successfully")
+        except ImportError as e:
+            print(f"[VieNeu] SDK not installed: {e}")
             raise HTTPException(
                 status_code=503,
                 detail="VieNeu SDK not installed. Run 'pip install vieneu' first."
             )
+        except Exception as e:
+            print(f"[VieNeu] Error loading engine: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
     return _tts_engine
+
+
+def generate_filename():
+    """Generate filename: VieNeuStudio-{random 8 digits}"""
+    random_id = random.randint(10000000, 99999999)
+    return f"VieNeuStudio-{random_id}"
 
 
 @router.post("/generate", response_model=TTSResponse)
@@ -70,23 +83,28 @@ async def generate_speech(request: TTSRequest):
         # Generate audio
         audio = tts.infer(text=request.text)
         
-        # Save to file
-        audio_id = str(uuid.uuid4())
-        audio_path = AUDIO_DIR / f"{audio_id}.wav"
+        # Generate filename and save
+        base_filename = generate_filename()
+        audio_filename = f"{base_filename}.wav"
+        audio_path = OUTPUT_DIR / audio_filename
+        
         tts.save(audio, str(audio_path))
         
         # Get duration (approximate: text length / 10 chars per second)
         duration = len(request.text) / 10.0
         
         return TTSResponse(
-            id=audio_id,
+            id=base_filename,
             text=request.text,
             voice=request.voice_id,
-            audio_url=f"/api/tts/audio/{audio_id}",
+            audio_url=f"/api/tts/audio/{base_filename}",
+            filename=audio_filename,
             duration=duration,
             created_at=datetime.now().isoformat(),
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -106,7 +124,7 @@ async def clone_voice(
         tts = get_tts_engine()
         
         # Save uploaded reference audio temporarily
-        temp_ref_path = AUDIO_DIR / f"temp_ref_{uuid.uuid4()}.wav"
+        temp_ref_path = OUTPUT_DIR / f"temp_ref_{uuid.uuid4()}.wav"
         with open(temp_ref_path, "wb") as f:
             content = await ref_audio.read()
             f.write(content)
@@ -119,18 +137,20 @@ async def clone_voice(
         )
         
         # Save output
-        audio_id = str(uuid.uuid4())
-        audio_path = AUDIO_DIR / f"{audio_id}.wav"
+        base_filename = generate_filename()
+        audio_filename = f"{base_filename}.wav"
+        audio_path = OUTPUT_DIR / audio_filename
         tts.save(audio, str(audio_path))
         
         # Cleanup temp file
         temp_ref_path.unlink(missing_ok=True)
         
         return TTSResponse(
-            id=audio_id,
+            id=base_filename,
             text=text,
             voice="cloned",
-            audio_url=f"/api/tts/audio/{audio_id}",
+            audio_url=f"/api/tts/audio/{base_filename}",
+            filename=audio_filename,
             duration=len(text) / 10.0,
             created_at=datetime.now().isoformat(),
         )
@@ -141,16 +161,16 @@ async def clone_voice(
 
 @router.get("/audio/{audio_id}")
 async def get_audio(audio_id: str):
-    """Download generated audio file"""
+    """Get generated audio file"""
     
-    audio_path = AUDIO_DIR / f"{audio_id}.wav"
+    audio_path = OUTPUT_DIR / f"{audio_id}.wav"
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio not found")
     
     return FileResponse(
         audio_path,
         media_type="audio/wav",
-        filename=f"vieneu_{audio_id}.wav",
+        filename=f"{audio_id}.wav",
     )
 
 
@@ -174,3 +194,18 @@ async def list_voices():
             },
         ]
     }
+
+
+@router.get("/output-files")
+async def list_output_files():
+    """List all generated audio files in Output folder"""
+    
+    files = []
+    for f in OUTPUT_DIR.glob("VieNeuStudio-*.wav"):
+        files.append({
+            "filename": f.name,
+            "size": f.stat().st_size,
+            "created": datetime.fromtimestamp(f.stat().st_ctime).isoformat(),
+        })
+    
+    return {"files": sorted(files, key=lambda x: x["created"], reverse=True)}

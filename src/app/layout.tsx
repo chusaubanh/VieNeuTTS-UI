@@ -25,9 +25,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi">
+    <html lang="vi" suppressHydrationWarning>
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}
+        suppressHydrationWarning
       >
         <div className="flex min-h-screen bg-[var(--bg-primary)]">
           <Sidebar />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Mic, Wand2, Play, Pause, Download, Volume2, RotateCcw } from "lucide-react";
 import { VoiceSelector, Voice } from "@/components/VoiceSelector";
 import { AudioUpload } from "@/components/AudioUpload";
@@ -14,6 +14,8 @@ interface TerminalLine {
     timestamp?: string;
 }
 
+const API_BASE = "http://localhost:8000";
+
 export default function TTSPage() {
     const [mode, setMode] = useState<TTSMode>("standard");
     const [text, setText] = useState("");
@@ -26,11 +28,19 @@ export default function TTSPage() {
     const [refAudio, setRefAudio] = useState<File | null>(null);
     const [refText, setRefText] = useState("");
     const [generatedAudioUrl, setGeneratedAudioUrl] = useState<string | null>(null);
+    const [generatedFilename, setGeneratedFilename] = useState<string>("");
     const [isGenerating, setIsGenerating] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [terminalLogs, setTerminalLogs] = useState<TerminalLine[]>([]);
     const [audioDuration, setAudioDuration] = useState<number>(0);
+    const [waveHeights, setWaveHeights] = useState<number[]>([]);
     const audioRef = useRef<HTMLAudioElement>(null);
+
+    // Generate fixed waveform heights on mount to avoid hydration mismatch
+    useEffect(() => {
+        const heights = Array.from({ length: 50 }, () => Math.random() * 80 + 20);
+        setWaveHeights(heights);
+    }, []);
 
     const addLog = (type: TerminalLine["type"], text: string) => {
         const timestamp = new Date().toLocaleTimeString("vi-VN", {
@@ -49,21 +59,51 @@ export default function TTSPage() {
         setTerminalLogs([]);
 
         addLog("command", "vieneu generate --text '...'");
-        addLog("info", "Loading model: VieNeu-TTS-0.3B");
-        addLog("info", `Voice: ${selectedVoice?.name || "Default"}`);
+        addLog("info", "Connecting to backend...");
 
-        setTimeout(() => addLog("info", "Tokenizing Vietnamese text..."), 300);
-        setTimeout(() => addLog("info", "Generating audio codes..."), 600);
-        setTimeout(() => addLog("info", "Decoding to waveform (24kHz)..."), 900);
+        try {
+            const response = await fetch(`${API_BASE}/api/tts/generate`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    text: text,
+                    voice_id: selectedVoice?.id || "ngoc-huyen",
+                }),
+            });
 
-        setTimeout(() => {
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || "Generation failed");
+            }
+
+            const data = await response.json();
+
+            addLog("info", `Model: VieNeu-TTS-0.3B`);
+            addLog("info", `Voice: ${selectedVoice?.name || "Default"}`);
+            addLog("info", "Tokenizing Vietnamese text...");
+            addLog("info", "Generating audio codes...");
+            addLog("info", "Decoding to waveform (24kHz)...");
             addLog("success", "✓ Audio generated successfully!");
+            addLog("info", `File: ${data.filename}`);
+            addLog("info", `Duration: ${data.duration.toFixed(1)}s`);
+
+            setAudioDuration(Math.ceil(data.duration));
+            setGeneratedFilename(data.filename);
+            setGeneratedAudioUrl(`${API_BASE}${data.audio_url}`);
+
+        } catch (error) {
+            addLog("error", `Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+            addLog("warning", "Make sure backend is running: cd backend && uvicorn main:app --reload");
+
+            // Fallback to demo audio for testing UI
+            addLog("info", "[Demo mode] Using sample audio...");
             const duration = Math.ceil(text.length / 10);
             setAudioDuration(duration);
-            addLog("info", `Duration: ${duration}s | Latency: 287ms`);
+            setGeneratedFilename(`VieNeuStudio-${Math.floor(Math.random() * 90000000 + 10000000)}.wav`);
             setGeneratedAudioUrl("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3");
-            setIsGenerating(false);
-        }, 1500);
+        }
+
+        setIsGenerating(false);
     };
 
     const togglePlay = () => {
@@ -81,6 +121,18 @@ export default function TTSPage() {
             audioRef.current.currentTime = 0;
             audioRef.current.play();
             setIsPlaying(true);
+        }
+    };
+
+    const handleDownload = () => {
+        if (generatedAudioUrl) {
+            const a = document.createElement("a");
+            a.href = generatedAudioUrl;
+            a.download = generatedFilename || "VieNeuStudio-audio.wav";
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            addLog("info", `Downloaded: ${generatedFilename}`);
         }
     };
 
@@ -159,7 +211,14 @@ export default function TTSPage() {
                                     ref={audioRef}
                                     src={generatedAudioUrl}
                                     onEnded={() => setIsPlaying(false)}
+                                    onPlay={() => setIsPlaying(true)}
+                                    onPause={() => setIsPlaying(false)}
                                 />
+
+                                {/* Filename display */}
+                                <div className="text-xs text-[var(--text-muted)] font-mono truncate">
+                                    📁 {generatedFilename}
+                                </div>
 
                                 {/* Waveform visualization */}
                                 <div className="bg-[var(--bg-tertiary)] rounded-xl p-4">
@@ -175,16 +234,16 @@ export default function TTSPage() {
                                             )}
                                         </button>
 
-                                        {/* Waveform bars */}
+                                        {/* Waveform bars - using pre-generated heights */}
                                         <div className="flex-1 flex items-center gap-0.5 h-12">
-                                            {[...Array(50)].map((_, i) => (
+                                            {waveHeights.map((height, i) => (
                                                 <div
                                                     key={i}
                                                     className={`flex-1 rounded-full transition-all ${isPlaying ? "bg-[var(--accent)]" : "bg-[var(--border-hover)]"
                                                         }`}
                                                     style={{
-                                                        height: `${Math.random() * 80 + 20}%`,
-                                                        opacity: isPlaying ? 0.6 + Math.random() * 0.4 : 0.5,
+                                                        height: `${height}%`,
+                                                        opacity: isPlaying ? 0.8 : 0.5,
                                                     }}
                                                 />
                                             ))}
@@ -202,7 +261,7 @@ export default function TTSPage() {
                                         <RotateCcw className="w-4 h-4" />
                                         Phát lại
                                     </button>
-                                    <button className="btn btn-secondary flex-1">
+                                    <button onClick={handleDownload} className="btn btn-secondary flex-1">
                                         <Download className="w-4 h-4" />
                                         Tải về
                                     </button>
