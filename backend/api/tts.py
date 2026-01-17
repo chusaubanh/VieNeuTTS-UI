@@ -1,5 +1,6 @@
 """
 TTS API Router - Text-to-Speech generation endpoints
+Supports both real VieNeu SDK and demo mode
 """
 
 import os
@@ -33,31 +34,45 @@ class TTSResponse(BaseModel):
     filename: str
     duration: float
     created_at: str
+    demo_mode: bool = False
 
 
 # TTS engine singleton
 _tts_engine = None
+_sdk_available = None
+
+
+def check_sdk_available():
+    """Check if VieNeu SDK is available"""
+    global _sdk_available
+    if _sdk_available is None:
+        try:
+            from vieneu import Vieneu
+            _sdk_available = True
+            print("[VieNeu] SDK found!")
+        except ImportError as e:
+            _sdk_available = False
+            print(f"[VieNeu] SDK not available: {e}")
+    return _sdk_available
 
 
 def get_tts_engine():
     """Initialize VieNeu TTS engine"""
     global _tts_engine
+    
+    if not check_sdk_available():
+        return None
+    
     if _tts_engine is None:
         try:
             from vieneu import Vieneu
+            print("[VieNeu] Initializing engine (this may take a while)...")
             _tts_engine = Vieneu()
-            # Load default LoRA
-            _tts_engine.load_lora_adapter("pnnbao-ump/VieNeu-TTS-0.3B-lora-ngoc-huyen")
-            print("[VieNeu] Engine loaded successfully")
-        except ImportError as e:
-            print(f"[VieNeu] SDK not installed: {e}")
-            raise HTTPException(
-                status_code=503,
-                detail="VieNeu SDK not installed. Run 'pip install vieneu' first."
-            )
+            print("[VieNeu] Engine loaded successfully!")
         except Exception as e:
             print(f"[VieNeu] Error loading engine: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            return None
+    
     return _tts_engine
 
 
@@ -65,6 +80,20 @@ def generate_filename():
     """Generate filename: VieNeuStudio-{random 8 digits}"""
     random_id = random.randint(10000000, 99999999)
     return f"VieNeuStudio-{random_id}"
+
+
+@router.get("/status")
+async def get_status():
+    """Get TTS engine status"""
+    sdk_ok = check_sdk_available()
+    engine = get_tts_engine() if sdk_ok else None
+    
+    return {
+        "sdk_installed": sdk_ok,
+        "engine_ready": engine is not None,
+        "output_dir": str(OUTPUT_DIR),
+        "demo_mode": not sdk_ok or engine is None,
+    }
 
 
 @router.post("/generate", response_model=TTSResponse)
@@ -77,36 +106,45 @@ async def generate_speech(request: TTSRequest):
     if len(request.text) > 500:
         raise HTTPException(status_code=400, detail="Text too long (max 500 chars)")
     
-    try:
-        tts = get_tts_engine()
-        
-        # Generate audio
-        audio = tts.infer(text=request.text)
-        
-        # Generate filename and save
-        base_filename = generate_filename()
-        audio_filename = f"{base_filename}.wav"
-        audio_path = OUTPUT_DIR / audio_filename
-        
-        tts.save(audio, str(audio_path))
-        
-        # Get duration (approximate: text length / 10 chars per second)
-        duration = len(request.text) / 10.0
-        
-        return TTSResponse(
-            id=base_filename,
-            text=request.text,
-            voice=request.voice_id,
-            audio_url=f"/api/tts/audio/{base_filename}",
-            filename=audio_filename,
-            duration=duration,
-            created_at=datetime.now().isoformat(),
-        )
+    base_filename = generate_filename()
+    audio_filename = f"{base_filename}.wav"
+    duration = len(request.text) / 10.0
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Try to use real TTS engine
+    tts = get_tts_engine()
+    
+    if tts is not None:
+        try:
+            # Real TTS generation
+            audio = tts.infer(text=request.text)
+            audio_path = OUTPUT_DIR / audio_filename
+            tts.save(audio, str(audio_path))
+            
+            return TTSResponse(
+                id=base_filename,
+                text=request.text,
+                voice=request.voice_id,
+                audio_url=f"/api/tts/audio/{base_filename}",
+                filename=audio_filename,
+                duration=duration,
+                created_at=datetime.now().isoformat(),
+                demo_mode=False,
+            )
+        except Exception as e:
+            print(f"[VieNeu] Generation error: {e}")
+            # Fall through to demo mode
+    
+    # Demo mode - return info without actual audio
+    return TTSResponse(
+        id=base_filename,
+        text=request.text,
+        voice=request.voice_id,
+        audio_url="",  # No audio in demo mode
+        filename=audio_filename,
+        duration=duration,
+        created_at=datetime.now().isoformat(),
+        demo_mode=True,
+    )
 
 
 @router.post("/clone")
@@ -120,9 +158,14 @@ async def clone_voice(
     if not text.strip():
         raise HTTPException(status_code=400, detail="Text cannot be empty")
     
+    tts = get_tts_engine()
+    if tts is None:
+        raise HTTPException(
+            status_code=503,
+            detail="VieNeu SDK not ready. Please install with 'pip install vieneu'"
+        )
+    
     try:
-        tts = get_tts_engine()
-        
         # Save uploaded reference audio temporarily
         temp_ref_path = OUTPUT_DIR / f"temp_ref_{uuid.uuid4()}.wav"
         with open(temp_ref_path, "wb") as f:
@@ -153,6 +196,7 @@ async def clone_voice(
             filename=audio_filename,
             duration=len(text) / 10.0,
             created_at=datetime.now().isoformat(),
+            demo_mode=False,
         )
     
     except Exception as e:
