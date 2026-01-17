@@ -61,6 +61,11 @@ export default function TTSPage() {
         addLog("command", "vieneu generate --text '...'");
         addLog("info", "Connecting to backend...");
 
+        const duration = Math.ceil(text.length / 10);
+        const demoFilename = `VieNeuStudio-${Math.floor(Math.random() * 90000000 + 10000000)}.wav`;
+        // Demo audio - Vietnamese sample
+        const demoAudioUrl = "https://www2.cs.uic.edu/~i101/SoundFiles/CantinaBand3.wav";
+
         try {
             const response = await fetch(`${API_BASE}/api/tts/generate`, {
                 method: "POST",
@@ -83,24 +88,32 @@ export default function TTSPage() {
             addLog("info", "Tokenizing Vietnamese text...");
             addLog("info", "Generating audio codes...");
             addLog("info", "Decoding to waveform (24kHz)...");
-            addLog("success", "✓ Audio generated successfully!");
-            addLog("info", `File: ${data.filename}`);
-            addLog("info", `Duration: ${data.duration.toFixed(1)}s`);
 
-            setAudioDuration(Math.ceil(data.duration));
-            setGeneratedFilename(data.filename);
-            setGeneratedAudioUrl(`${API_BASE}${data.audio_url}`);
+            if (data.demo_mode || !data.audio_url) {
+                // Demo mode - SDK not available
+                addLog("warning", "⚠️ Demo mode: VieNeu SDK chưa sẵn sàng");
+                addLog("info", "Cần Python 3.11/3.12 + PyTorch + CUDA GPU");
+                addLog("success", "✓ Using demo audio");
+                setAudioDuration(duration);
+                setGeneratedFilename(demoFilename);
+                setGeneratedAudioUrl(demoAudioUrl);
+            } else {
+                // Real audio generated
+                addLog("success", "✓ Audio generated successfully!");
+                addLog("info", `File: ${data.filename}`);
+                addLog("info", `Saved to: Output/${data.filename}`);
+                setAudioDuration(Math.ceil(data.duration));
+                setGeneratedFilename(data.filename);
+                setGeneratedAudioUrl(`${API_BASE}${data.audio_url}`);
+            }
 
         } catch (error) {
             addLog("error", `Error: ${error instanceof Error ? error.message : "Unknown error"}`);
-            addLog("warning", "Make sure backend is running: cd backend && uvicorn main:app --reload");
-
-            // Fallback to demo audio for testing UI
+            addLog("warning", "Backend không phản hồi");
             addLog("info", "[Demo mode] Using sample audio...");
-            const duration = Math.ceil(text.length / 10);
             setAudioDuration(duration);
-            setGeneratedFilename(`VieNeuStudio-${Math.floor(Math.random() * 90000000 + 10000000)}.wav`);
-            setGeneratedAudioUrl("https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3");
+            setGeneratedFilename(demoFilename);
+            setGeneratedAudioUrl(demoAudioUrl);
         }
 
         setIsGenerating(false);
@@ -150,8 +163,8 @@ export default function TTSPage() {
                     <button
                         onClick={() => setMode("standard")}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${mode === "standard"
-                                ? "bg-[var(--accent)] text-white shadow-md"
-                                : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                            ? "bg-[var(--accent)] text-white shadow-md"
+                            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                             }`}
                     >
                         <Mic className="w-4 h-4" />
@@ -160,8 +173,8 @@ export default function TTSPage() {
                     <button
                         onClick={() => setMode("clone")}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all ${mode === "clone"
-                                ? "bg-[var(--accent)] text-white shadow-md"
-                                : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                            ? "bg-[var(--accent)] text-white shadow-md"
+                            : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                             }`}
                     >
                         <Wand2 className="w-4 h-4" />
@@ -321,8 +334,8 @@ export default function TTSPage() {
                         onClick={handleGenerate}
                         disabled={!text.trim() || isGenerating}
                         className={`btn py-4 text-base font-semibold ${isGenerating || !text.trim()
-                                ? "bg-[var(--bg-elevated)] text-[var(--text-muted)] cursor-not-allowed"
-                                : "btn-primary"
+                            ? "bg-[var(--bg-elevated)] text-[var(--text-muted)] cursor-not-allowed"
+                            : "btn-primary"
                             }`}
                     >
                         {isGenerating ? (
