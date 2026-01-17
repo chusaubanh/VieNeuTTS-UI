@@ -63,8 +63,8 @@ export default function TTSPage() {
 
         const duration = Math.ceil(text.length / 10);
         const demoFilename = `VieNeuStudio-${Math.floor(Math.random() * 90000000 + 10000000)}.wav`;
-        // Demo audio - Vietnamese sample
-        const demoAudioUrl = "https://www2.cs.uic.edu/~i101/SoundFiles/CantinaBand3.wav";
+        // Demo audio - local file
+        const demoAudioUrl = "/demo-audio.mp3";
 
         try {
             const response = await fetch(`${API_BASE}/api/tts/generate`, {
