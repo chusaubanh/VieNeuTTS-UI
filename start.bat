@@ -28,12 +28,12 @@ if not exist "node_modules" (
     echo [2/6] Frontend dependencies OK
 )
 
-:: Install Python dependencies including VieNeu
+:: Install Python dependencies including VieNeu and librosa
 echo [3/6] Cài đặt Python dependencies...
 pip install fastapi uvicorn python-multipart aiofiles pydantic python-dotenv --quiet 2>nul
 
-echo [4/6] Cài đặt VieNeu TTS SDK...
-pip install vieneu --quiet 2>nul
+echo [4/6] Cài đặt VieNeu TTS SDK + dependencies...
+pip install vieneu librosa soundfile numpy scipy --quiet 2>nul
 
 :: Create Output folder
 if not exist "Output" mkdir Output
